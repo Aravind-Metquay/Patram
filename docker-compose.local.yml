@@ -1,0 +1,222 @@
+name: pdf-service
+
+services:
+  api:
+    build:
+      context: .
+    image: pdf-service:local
+    command: [ "node", "dist/api/server.js" ]
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379
+      GOTENBERG_URL: http://gotenberg:3000
+      STORAGE_LOCAL_DIR: /data/jobs
+
+    # Local machine:
+    # localhost:8080 -> api container:8080
+    ports:
+      - "8080:8080"
+
+    volumes:
+      - pdf_data:/data/jobs
+
+    depends_on:
+      redis:
+        condition: service_healthy
+      gotenberg:
+        condition: service_started
+
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "-O-", "http://127.0.0.1:8080/health" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  worker:
+    build:
+      context: .
+    image: pdf-service:local
+    command: [ "node", "dist/worker/worker.js" ]
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379
+      GOTENBERG_URL: http://gotenberg:3000
+      STORAGE_LOCAL_DIR: /data/jobs
+
+    volumes:
+      - pdf_data:/data/jobs
+
+    depends_on:
+      redis:
+        condition: service_healthy
+      gotenberg:
+        condition: service_started
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory-policy
+      - noeviction
+
+    volumes:
+      - redis_data:/data
+
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  gotenberg:
+    image: gotenberg/gotenberg:8.36-chromium
+    restart: unless-stopped
+
+    command:
+      - "gotenberg"
+      - "--api-port=3000"
+      - "--api-timeout=45s"
+      - "--api-disable-download-from=true"
+      - "--webhook-disable=true"
+      - "--chromium-deny-private-ips=true"
+      - "--chromium-max-concurrency=2"
+      - "--chromium-max-queue-size=100"
+      - "--chromium-restart-after=50"
+      - "--gotenberg-hide-banner=true"
+      - "--log-level=info"
+      - "--api-correlation-id-header=Gotenberg-Trace"
+
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "http://127.0.0.1:3000/health" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    profiles: [ "monitoring" ]
+    restart: unless-stopped
+
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    profiles: [ "monitoring" ]
+    restart: unless-stopped
+
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+
+    ports:
+      - "127.0.0.1:3001:3000"
+
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+
+    depends_on:
+      - prometheus
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.0
+    profiles: [ "monitoring" ]
+    restart: unless-stopped
+    pid: host
+
+    command:
+      - "--path.rootfs=/host"
+      - "--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+)($$|/)"
+
+    volumes:
+      - /:/host:ro,rslave
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    profiles: [ "monitoring" ]
+    restart: unless-stopped
+    privileged: true
+
+    devices:
+      - /dev/kmsg
+
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pdf_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
