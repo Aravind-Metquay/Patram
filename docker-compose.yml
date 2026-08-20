@@ -1,0 +1,47 @@
+services:
+  api:
+    build: .
+    command: ["node", "dist/api/server.js"]
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379
+      GOTENBERG_URL: http://gotenberg:3000
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+      - gotenberg
+
+  worker:
+    build: .
+    command: ["node", "dist/worker/worker.js"]
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379
+      GOTENBERG_URL: http://gotenberg:3000
+    depends_on:
+      - redis
+      - gotenberg
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+
+  gotenberg:
+    image: gotenberg/gotenberg:8-chromium
+    # Gotenberg's config lives entirely in CLI flags (no env-var binding),
+    # so the hardening knobs are passed here rather than via `environment:`.
+    command:
+      - "gotenberg"
+      - "--chromium-max-concurrency=1"
+      - "--chromium-deny-private-ips=true"
+      - "--api-disable-download-from=true"
+      - "--webhook-disable=true"
+      - "--chromium-restart-after=50"
+
+volumes:
+  redis_data:
