@@ -1,0 +1,33 @@
+# Scrapes the service's own metrics plus host and container metrics. All targets
+# live on the compose network; nothing here is exposed to the internet.
+global:
+  scrape_interval: 10s
+  scrape_timeout: 5s
+  evaluation_interval: 30s
+  external_labels:
+    stack: pdf-service
+
+scrape_configs:
+  # DNS service discovery rather than a static host:port, so `docker compose up
+  # --scale worker=3` is picked up without editing this file.
+  - job_name: pdf-api
+    dns_sd_configs:
+      - names: ["api"]
+        type: A
+        port: 9090
+
+  - job_name: pdf-worker
+    dns_sd_configs:
+      - names: ["worker"]
+        type: A
+        port: 9091
+
+  # Host CPU (user/system/iowait/steal), memory, swap, disk, network.
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # Per-container CPU and memory, including Gotenberg's Chromium.
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]

@@ -1,0 +1,135 @@
+name: pdf-service
+
+services:
+  api:
+    build:
+      context: .
+    image: pdf-service:local
+    command: ["node", "dist/api/server.js"]
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      REDIS_URL: redis://redis:6379
+      GOTENBERG_URL: http://gotenberg:3000
+      STORAGE_LOCAL_DIR: /data/jobs
+
+    # Elastic Beanstalk / ALB sends HTTP traffic to EC2 port 80.
+    # Docker forwards that traffic to Fastify on port 8080.
+    ports:
+      - "80:8080"
+
+    volumes:
+      - pdf_data:/data/jobs
+
+    depends_on:
+      redis:
+        condition: service_healthy
+      gotenberg:
+        condition: service_started
+
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  worker:
+    build:
+      context: .
+    image: pdf-service:local
+    command: ["node", "dist/worker/worker.js"]
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      REDIS_URL: redis://redis:6379
+      GOTENBERG_URL: http://gotenberg:3000
+      STORAGE_LOCAL_DIR: /data/jobs
+
+    volumes:
+      - pdf_data:/data/jobs
+
+    depends_on:
+      redis:
+        condition: service_healthy
+      gotenberg:
+        condition: service_started
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory-policy
+      - noeviction
+
+    volumes:
+      - redis_data:/data
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  gotenberg:
+    image: gotenberg/gotenberg:8.36-chromium
+    restart: unless-stopped
+
+    command:
+      - "gotenberg"
+      - "--api-port=3000"
+      - "--api-timeout=45s"
+      - "--api-disable-download-from=true"
+      - "--webhook-disable=true"
+      - "--chromium-deny-private-ips=true"
+      - "--chromium-max-concurrency=2"
+      - "--chromium-max-queue-size=100"
+      - "--chromium-restart-after=50"
+      - "--gotenberg-hide-banner=true"
+      - "--log-level=info"
+      - "--api-correlation-id-header=Gotenberg-Trace"
+
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://127.0.0.1:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  pdf_data:
+  redis_data:
