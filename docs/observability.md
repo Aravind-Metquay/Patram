@@ -250,6 +250,11 @@ renderer rather than a misconfiguration.
 
 Restore `VITALS_INTERVAL_SECONDS` and the rate limits when you are done.
 
+Measure **A-B-A**, not A-B: run the baseline config again at the end. Laptops
+throttle and shared vCPUs drift, and the repeat is the only thing that tells you
+whether a regression belongs to the config or to the machine. Recorded results
+live in `PROGRESS.md` §6.
+
 ## 5. Reading the numbers
 
 Stop raising concurrency when any of these appear:
@@ -257,6 +262,7 @@ Stop raising concurrency when any of these appear:
 | Signal | Threshold | Meaning |
 | --- | --- | --- |
 | Throughput gain per step | < 10% | You are at the useful limit |
+| Throughput *falling* as concurrency rises | Any | Not contention — contention divides CPU, it does not destroy it. Something added cost: memory pressure and swapping, or the machine drifting (thermal throttling, a noisy neighbour). Check free memory and swap first, then re-run the earlier config to confirm the machine is still comparable |
 | `render_ms` p95 | Rising step over step | CPU contention between renders |
 | `host_cpu_busy_pct` | > 85% sustained | CPU-bound; more vCPU would help |
 | `host_load1` / cores | > 1.0 | Processes queuing for CPU |

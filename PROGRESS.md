@@ -28,7 +28,7 @@ to test everything on your machine.
 | 11 | `POST /v1/pdf/sync` (still through the queue) | **Done** |
 | 12 | Cloudflare R2 object storage | **Done** — driver verified against a fake S3; needs one run with real credentials |
 | 13 | Idempotency keys | **Done** |
-| 14 | Local load testing | **Tooling done** — you have run C1–C4; procedure in §5.5 |
+| 14 | Local load testing | **Done** — C2 chosen and committed as the default; numbers in §6, procedure in §5.5 |
 | 15 | Hostinger VPS | Not started |
 | 16 | Manual first deploy | Not started |
 | 17 | Cloudflare Tunnel | Not started |
@@ -365,11 +365,11 @@ Repeat for C=3, then:
 node scripts/compare-runs.mjs metrics/run-c2.json metrics/run-c3.json
 ```
 
-**Worth re-checking on your C1–C4 runs:** if Gotenberg was still capped at
-`--chromium-max-concurrency=1` while the worker ran 3–4, the extra jobs queued
-*inside* Gotenberg and that wait landed inside `render_ms` — which would explain
-render p50 climbing 0.94 → 2.11 s almost linearly with concurrency. A C=3 run
-with both knobs at 3 will tell you whether C=2 is really the ceiling.
+The committed defaults are already 2/2, from the 100-job runs recorded in §6.
+When you re-measure — on the VPS, or after changing the certificate template —
+run **A-B-A** (C2, C3, then C2 again) rather than A-B. A laptop or a noisy VPS
+neighbour can drift between runs, and the repeat is what tells you whether a
+regression is the config or the machine.
 
 Stop raising concurrency when throughput gains drop below ~10 %, `render_ms` p95
 starts rising step over step, host CPU sits above 85 %, load per core passes 1.0,
@@ -434,7 +434,110 @@ Remember to restore `.env` after the test window: `VITALS_INTERVAL_SECONDS=30`,
 
 ---
 
-## 6. Verification status
+## 6. Benchmark log
+
+Baseline numbers to compare future runs against — especially the first runs on
+the VPS. Environment matters as much as the config, so it is recorded per run.
+
+### Run A — sample certificate, 25 jobs, client concurrency 5
+
+Docker Desktop (Windows), `scripts/sample-certificate.html`. **Caveat:** it is
+not confirmed that `--chromium-max-concurrency` was raised in step with
+`WORKER_CONCURRENCY` for the C3/C4 rows, so those two may reflect surplus jobs
+queuing inside Gotenberg rather than true parallel rendering.
+
+| Metric | C1 | C2 | C3 | C4 |
+| --- | --: | --: | --: | --: |
+| Throughput (pdf/s) | 0.93 | 1.48 | **1.56** | 1.56 |
+| Wall clock | 26.98s | 16.84s | **16.02s** | 16.04s |
+| E2E p50 | 4.90s | 3.21s | 3.02s | **2.70s** |
+| E2E p95 | 6.87s | **3.90s** | 4.99s | 5.38s |
+| Render p50 | **0.94s** | 1.42s | 1.71s | 2.11s |
+| Render p95 | 1.80s | **1.67s** | 2.64s | 4.04s |
+| Queue p50 | 4.13s | 1.92s | 1.16s | **0.51s** |
+| Queue p95 | 5.57s | 2.87s | 3.24s | **2.43s** |
+| Failures | 0 | 0 | 0 | 0 |
+
+Reading: throughput flattens from C3 onwards while the render tail keeps
+growing. C4 buys nothing.
+
+### Run B — real certificate, 100 jobs, client concurrency 10
+
+Docker Desktop (Windows), production certificate HTML, both knobs confirmed set
+together.
+
+| Metric | C2 | C3 | C3 vs C2 |
+| --- | --: | --: | --: |
+| Jobs / failures | 100 / 0 | 100 / 0 | same |
+| Wall clock | **57.28s** | 78.48s | +37% |
+| Throughput (pdf/s) | **1.746** | 1.274 | **−27%** |
+| E2E p50 | **5.21s** | 7.53s | +45% |
+| E2E p95 | **7.93s** | 14.76s | +86% |
+| E2E max | **10.83s** | 16.57s | +53% |
+| Render p50 | **0.97s** | 2.03s | +110% |
+| Render p95 | **2.54s** | 4.08s | +61% |
+| Render max | **3.56s** | 8.33s | +134% |
+| Queue p50 | **4.17s** | 4.93s | +18% |
+| Queue p95 | **6.40s** | 11.78s | +84% |
+
+**Decision: C2 on this machine**, and that is now the committed default
+(`WORKER_CONCURRENCY=2`, `--chromium-max-concurrency=2`).
+
+**Reading, and why it is not simply saturation.** Contention divides CPU; it
+does not destroy it. Had the VM merely been CPU-bound at C2, a third render
+would have split the same CPU three ways — each render slower, total throughput
+flat:
+
+```
+C2   2 in flight / 0.97s = 2.06/s ideal  →  1.746/s measured (85%: queue + storage overhead)
+C3   fair sharing predicts render ≈ 1.46s and throughput ≈ 2.06/s (flat)
+     measured: render 2.03s, throughput 1.274/s
+```
+
+Roughly 39% more cost per render appeared than fair sharing accounts for, so
+something *added* work rather than dividing it. Candidates, untested:
+
+1. **Memory pressure in the Docker Desktop VM** — three Chromiums plus the stack
+   against a VM memory cap. Throughput going backwards is the classic signature.
+2. **Thermal throttling / order effect** — C3 ran after C2 on a warm laptop. An
+   A-B-A re-run (`--tag c2-repeat`) settles this; if the repeat lands near
+   1.75/s the regression is real, if near 1.4/s the comparison is partly an
+   artifact of the machine heating up.
+3. **Mid-run Chromium restarts** — `--chromium-restart-after=50` fires once or
+   twice during a 100-job run, which explains the 8.33s outliers but not the
+   doubled median.
+
+### Open questions for the VPS runs
+
+- Cores or memory? The `vitals` host section (`host_cores`,
+  `host_cpu_busy_pct`, `host_mem_free_mb`, swap) answers it directly; on
+  4 vCPU / 16 GB the memory ceiling that likely bit locally should disappear.
+- `--chromium-auto-start=true` — Gotenberg starts a browser per conversion by
+  default; keeping one warm may return a slice of the 0.97s p50 at every
+  concurrency. Worth one A/B, magnitude unknown.
+- `--chromium-restart-after=200` (or `0`) for a clean tail measurement.
+- Watch `host_cpu_steal_pct` from the first run: on shared-vCPU hosting it can
+  make a good config look bad for reasons no code change will fix.
+
+Expect the VPS to start at 2 and be re-tested at 3 and 4 with the same 100-job
+workload — per-render cost is roughly one core-second, so a 4-vCPU box should
+manage about three concurrent renders once a core is left for the API, worker,
+Redis and the OS.
+
+### Adding a row
+
+```bash
+node scripts/loadtest.mjs --count 100 --concurrency 10 \
+  --tag <host>-c<N> --out metrics/run-<host>-c<N>.json \
+  --url http://localhost:8080 --key "$PDF_API_KEY" --html certificate.html
+docker compose logs --no-color --since 15m worker api | node scripts/logreport.mjs
+node scripts/compare-runs.mjs metrics/run-*.json
+```
+
+Record the machine, the workload, both concurrency knobs, and the host section
+of the report — a throughput number without its environment is not comparable.
+
+## 7. Verification status
 
 Verified by running it (Linux dev container, real Redis, a stub Gotenberg, a stub
 S3, and the compiled `dist/` output — not `tsx`):
@@ -464,7 +567,7 @@ Not provable without a Docker daemon — this is what your local run adds:
 
 ---
 
-## 7. Next steps, in order
+## 8. Next steps, in order
 
 1. **Phase 5 properly** — real certificates through `/v1/pdf/sync`, compared
    against the current renderer.

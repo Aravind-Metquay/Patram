@@ -232,7 +232,7 @@ values worth knowing:
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `WORKER_CONCURRENCY` | `1` | Renders in flight per worker process |
+| `WORKER_CONCURRENCY` | `2` | Renders in flight per worker process; keep `--chromium-max-concurrency` equal |
 | `RENDER_TIMEOUT_MS` | `30000` | Client-side timeout on the Gotenberg call |
 | `MAX_HTML_BYTES` | `5242880` | Rejected before anything is queued |
 | `MAX_REQUEST_BYTES` | `6291456` | Fastify body limit, checked before auth |
@@ -249,8 +249,8 @@ values worth knowing:
 | `METRICS_ENABLED` | `true` | Prometheus endpoints on private ports 9090/9091 |
 | `SLOW_RENDER_LOG_MS` | `10000` | Renders slower than this are logged at warn |
 
-Gotenberg itself is configured in `docker-compose.yml`: one render at a time
-(`--chromium-max-concurrency=1`), private-IP blocking on
+Gotenberg itself is configured in `docker-compose.yml`: two renders at a time
+(`--chromium-max-concurrency=2`, matching `WORKER_CONCURRENCY`), private-IP blocking on
 (`--chromium-deny-private-ips=true`, the SSRF guard), `downloadFrom` and
 webhooks disabled, and Chromium recycled every 50 conversions.
 

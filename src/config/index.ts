@@ -136,7 +136,12 @@ export const config = {
   },
 
   worker: {
-    concurrency: int('WORKER_CONCURRENCY', 1),
+    /**
+     * Renders in flight per worker process. 2 measured best on a 4-core dev
+     * machine; it must stay in step with Gotenberg's --chromium-max-concurrency,
+     * or the surplus queues inside Gotenberg where the wait hides in render_ms.
+     */
+    concurrency: int('WORKER_CONCURRENCY', 2),
   },
 
   limits: {

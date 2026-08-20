@@ -103,11 +103,20 @@ services:
       # SSRF protection: Chromium may not fetch 127.0.0.0/8, RFC1918,
       # link-local or unique-local addresses while rendering.
       - "--chromium-deny-private-ips=true"
-      # One render at a time; BullMQ is what queues the rest.
-      - "--chromium-max-concurrency=1"
+      # Must equal WORKER_CONCURRENCY. If this is lower, the surplus jobs queue
+      # inside Gotenberg and that wait hides inside render_ms, which reads as a
+      # slow renderer rather than a misconfiguration. 2 is the measured sweet
+      # spot on a 4-core machine - see the benchmark log in PROGRESS.md.
+      - "--chromium-max-concurrency=2"
       - "--chromium-max-queue-size=100"
-      # Recycle Chromium periodically to bound memory growth.
+      # Recycle Chromium periodically to bound memory growth. Note that a
+      # restart lands on whichever render triggers it, so during a 100-job
+      # benchmark it shows up as a couple of latency outliers; raise it (or use
+      # 0) when you want a clean tail measurement.
       - "--chromium-restart-after=50"
+      # Untested lever worth an A/B: Gotenberg starts a browser per conversion
+      # by default, and this keeps one warm. Measure before adopting.
+      # - "--chromium-auto-start=true"
       - "--gotenberg-hide-banner=true"
       - "--log-level=info"
       # Correlate Gotenberg's own log lines with our job ids, which the worker
