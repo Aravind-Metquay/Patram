@@ -273,6 +273,12 @@ Redis only ever carries small control messages.
 A bucket lifecycle rule is the cheapest way to enforce retention; the worker also
 runs a janitor sweep every `JANITOR_INTERVAL_SECONDS` as a safety net.
 
+## Where things stand
+
+[PROGRESS.md](PROGRESS.md) tracks the build against the original 18-phase plan,
+records the decisions that deviate from it, and carries the full local test plan
+with commands and expected results.
+
 ## Observability
 
 Detailed structured logs are always on, and are enough on their own to size the
