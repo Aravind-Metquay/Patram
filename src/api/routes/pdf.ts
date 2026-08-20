@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { config } from '../../config/index.js';
 import { AppError, badRequest } from '../../shared/errors.js';
+import { metrics } from '../../shared/metrics.js';
 import { PDF_OPTIONS_SCHEMA, type PdfOptions } from '../../shared/pdf-options.js';
 import { createPdfJob, getJobView, toJobView, waitForJob } from '../jobs.service.js';
 import { sendPdf } from '../pdf-reply.js';
@@ -58,8 +59,15 @@ export function registerPdfRoutes(app: FastifyInstance): void {
         throw new AppError(500, 'INTERNAL_ERROR', 'Job disappeared immediately after enqueue');
       }
 
+      metrics.jobsAccepted.inc({ mode: 'async', reused: String(outcome.reused) });
       request.log.info(
-        { jobId: outcome.jobId, reused: outcome.reused, htmlBytes: request.body.html.length },
+        {
+          jobId: outcome.jobId,
+          apiKeyId,
+          reused: outcome.reused,
+          html_bytes: Buffer.byteLength(request.body.html, 'utf8'),
+          mode: 'async',
+        },
         'pdf job accepted',
       );
       // A replayed idempotent request is not a new job, so it is not a 202.
@@ -87,6 +95,18 @@ export function registerPdfRoutes(app: FastifyInstance): void {
         idempotencyKey: idempotencyKey(request),
       });
 
+      metrics.jobsAccepted.inc({ mode: 'sync', reused: String(outcome.reused) });
+      request.log.info(
+        {
+          jobId: outcome.jobId,
+          apiKeyId,
+          reused: outcome.reused,
+          html_bytes: Buffer.byteLength(request.body.html, 'utf8'),
+          mode: 'sync',
+        },
+        'pdf job accepted',
+      );
+
       const waited = await waitForJob(app.services, outcome.jobId, config.sync.timeoutMs);
       if (waited.kind === 'timeout') {
         const view = await toJobView(app.services, waited.job);
@@ -106,7 +126,12 @@ export function registerPdfRoutes(app: FastifyInstance): void {
       }
       const object = await app.services.storage.getStream(result.outputKey);
       request.log.info(
-        { jobId: outcome.jobId, bytes: result.bytes, totalMs: result.totalMs },
+        {
+          jobId: outcome.jobId,
+          pdf_bytes: result.bytes,
+          render_ms: result.renderMs,
+          total_ms: result.totalMs,
+        },
         'sync render completed',
       );
       return sendPdf(reply, object, outcome.jobId, request.body.filename);

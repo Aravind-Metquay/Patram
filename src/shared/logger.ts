@@ -13,4 +13,15 @@ export function createLogger(name: string): Logger {
   });
 }
 
+/**
+ * The subset of the logger that helpers need. Both pino's Logger and Fastify's
+ * FastifyBaseLogger satisfy it, so shared code works with either.
+ */
+export interface LogSink {
+  debug(obj: object, msg?: string): void;
+  info(obj: object, msg?: string): void;
+  warn(obj: object, msg?: string): void;
+  error(obj: object, msg?: string): void;
+}
+
 export type { Logger };

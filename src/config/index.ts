@@ -164,6 +164,19 @@ export const config = {
     idempotencyTtlSeconds: int('IDEMPOTENCY_TTL_SECONDS', 86_400),
   },
 
+  observability: {
+    /** Prometheus endpoints, on ports that are never published to the host. */
+    metricsEnabled: bool('METRICS_ENABLED', true),
+    apiMetricsPort: int('API_METRICS_PORT', 9090),
+    workerMetricsPort: int('WORKER_METRICS_PORT', 9091),
+    /** How often each process logs a "vitals" line (CPU, steal, memory, queue). */
+    vitalsIntervalSeconds: int('VITALS_INTERVAL_SECONDS', 30),
+    /** Renders slower than this are logged at warn level. */
+    slowRenderMs: int('SLOW_RENDER_LOG_MS', 10_000),
+    /** Per-request access logs. Noisy under load testing, but often what you want. */
+    logHttpRequests: bool('LOG_HTTP_REQUESTS', true),
+  },
+
   janitor: {
     enabled: bool('JANITOR_ENABLED', true),
     intervalSeconds: int('JANITOR_INTERVAL_SECONDS', 600),

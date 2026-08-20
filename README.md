@@ -245,6 +245,9 @@ values worth knowing:
 | `FAILED_JOB_TTL_SECONDS` | `86400` | Failed jobs keep their input HTML |
 | `SYNC_TIMEOUT_MS` | `25000` | When `/v1/pdf/sync` gives up waiting |
 | `STORAGE_DRIVER` | `local` | `local` or `r2` |
+| `VITALS_INTERVAL_SECONDS` | `30` | Heartbeat log interval; 10–15 while load testing |
+| `METRICS_ENABLED` | `true` | Prometheus endpoints on private ports 9090/9091 |
+| `SLOW_RENDER_LOG_MS` | `10000` | Renders slower than this are logged at warn |
 
 Gotenberg itself is configured in `docker-compose.yml`: one render at a time
 (`--chromium-max-concurrency=1`), private-IP blocking on
@@ -270,18 +273,54 @@ Redis only ever carries small control messages.
 A bucket lifecycle rule is the cheapest way to enforce retention; the worker also
 runs a janitor sweep every `JANITOR_INTERVAL_SECONDS` as a safety net.
 
+## Observability
+
+Detailed structured logs are always on, and are enough on their own to size the
+machine — see **[docs/observability.md](docs/observability.md)** for the field
+reference and the load-testing procedure.
+
+```bash
+docker compose logs -f worker                                  # live
+docker compose logs --no-color --since 30m worker api | node scripts/logreport.mjs
+```
+
+Every render logs its full timing breakdown (`queue_wait_ms`, `render_ms`,
+`upload_ms`, `total_ms`, byte sizes, `worker_concurrency`, `active_jobs`), and
+each process logs a `vitals` heartbeat every `VITALS_INTERVAL_SECONDS` carrying
+process CPU/RSS/event-loop plus **host CPU including steal**, load, memory and
+queue depth. Container logs are capped at 20 MB × 5 files per service.
+
+Prometheus metrics are exposed by both processes on ports that are *not*
+published to the host (`api:9090/metrics`, `worker:9091/metrics`), and an
+optional monitoring stack turns them into dashboards:
+
+```bash
+docker compose --profile monitoring up -d       # prometheus, grafana, node-exporter, cadvisor
+ssh -L 3001:localhost:3001 user@your-vps        # grafana is bound to localhost
+```
+
+The provisioned dashboard covers throughput, render/queue percentiles, queue
+depth, host CPU with a dedicated steal panel, memory and swap, per-container CPU
+and memory (Chromium's real footprint), event loop lag, and failures by code.
+
 ## Load testing
 
 ```bash
-node scripts/loadtest.mjs --count 25 --concurrency 5 \
+node scripts/loadtest.mjs --count 50 --concurrency 10 \
+  --tag c2 --out metrics/run-c2.json \
   --url http://localhost:8080 --key "$PDF_API_KEY" \
   --html scripts/sample-certificate.html
+
+node scripts/compare-runs.mjs metrics/run-c1.json metrics/run-c2.json
+INTERVAL=5 OUT_DIR=metrics TAG=c2 ./scripts/sample-host.sh   # host CPU/steal CSV
 ```
 
-Reports throughput plus p50/p95/max for end-to-end latency, Gotenberg render
-time and queue wait, which is what tells you whether raising
-`WORKER_CONCURRENCY` and `--chromium-max-concurrency` past 1 is justified. Raise
-them together, one step at a time, and watch memory and CPU steal.
+`compare-runs.mjs` prints the runs side by side with a verdict per step
+("throughput +4.2%, render p95 +54% — not worth it"), which is what tells you
+whether raising `WORKER_CONCURRENCY` and `--chromium-max-concurrency` is
+justified. **Raise both together** — a worker allowed 3 renders against a
+Gotenberg capped at 1 just queues inside Gotenberg, where the wait hides inside
+`render_ms`.
 
 A run larger than `RATE_LIMIT_MAX` (60 renders/minute by default) will hit the
 rate limit. The script waits out `429`s and excludes that waiting from the
@@ -303,11 +342,15 @@ src/
   storage/    local disk and R2/S3 drivers
   config/     environment parsing and boot-time validation
   shared/     ids, errors, logger, PDF option contract
-scripts/      smoke test, load test, sample certificate
+scripts/      smoke test, load test, log report, host sampler, sample certificate
+observability/ prometheus config, grafana provisioning and dashboard
+docs/         observability and load-testing runbook
 ```
 
 `src/api/server.ts` and `src/worker/worker.ts` are the two entrypoints; the same
-image runs either one depending on the command.
+image runs either one depending on the command. `observability/` holds the
+Prometheus config and the provisioned Grafana dashboard; `docs/` holds the
+load-testing runbook.
 
 ## Not included yet
 

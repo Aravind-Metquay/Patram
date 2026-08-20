@@ -7,6 +7,10 @@
  * Usage:
  *   node scripts/loadtest.mjs --count 25 --concurrency 5 \
  *     --url http://localhost:8080 --key pdf_sk_xxx --html scripts/sample-certificate.html
+ *
+ * Tag a run and save it, then compare runs with scripts/compare-runs.mjs:
+ *   node scripts/loadtest.mjs --count 50 --concurrency 10 --tag c2 \
+ *     --out metrics/run-c2.json --key "$PDF_API_KEY" --html cert.html
  */
 import fs from 'node:fs/promises';
 
@@ -27,6 +31,9 @@ const timeoutMs = Number(args.get('timeout') ?? 120_000);
 // A load test is expected to hit the rate limit; waiting it out is the point,
 // so 429s are retried rather than counted as failures.
 const maxRateLimitWaitMs = Number(args.get('max-429-wait') ?? 70_000);
+// Free-form label for the run (typically the server-side concurrency setting).
+const tag = args.get('tag') ?? null;
+const outPath = args.get('out') ?? null;
 
 if (!apiKey) {
   console.error('Missing API key: pass --key or set PDF_API_KEY');
@@ -132,7 +139,10 @@ function percentile(values, p) {
   return sorted[index];
 }
 
-console.log(`Load test: ${count} jobs, ${concurrency} concurrent, html ${html.length} bytes`);
+console.log(
+  `Load test${tag ? ` [${tag}]` : ''}: ${count} jobs, ${concurrency} concurrent client requests, html ${html.length} bytes`,
+);
+const startedAt = new Date().toISOString();
 const wallStart = Date.now();
 const results = [];
 let next = 0;
@@ -178,4 +188,37 @@ if (ok.length > 0) {
 }
 for (const failure of failed.slice(0, 5)) {
   console.log('failure:', JSON.stringify(failure));
+}
+
+const summary = {
+  tag,
+  started_at: startedAt,
+  finished_at: new Date().toISOString(),
+  url: baseUrl,
+  requested: count,
+  client_concurrency: concurrency,
+  html_bytes: html.length,
+  completed: ok.length,
+  failed: failed.length,
+  wall_ms: wallMs,
+  throughput_per_s: Number((ok.length / (wallMs / 1000)).toFixed(3)),
+  rate_limited_requests: rateLimitedRequests,
+  rate_limit_wait_ms: rateLimitWaitMs,
+  e2e_p50_ms: percentile(totals, 50),
+  e2e_p95_ms: percentile(totals, 95),
+  e2e_max_ms: percentile(totals, 100),
+  render_p50_ms: percentile(renders, 50),
+  render_p95_ms: percentile(renders, 95),
+  render_max_ms: percentile(renders, 100),
+  queue_p50_ms: percentile(queueWaits, 50),
+  queue_p95_ms: percentile(queueWaits, 95),
+  pdf_bytes_mean:
+    ok.length > 0 ? Math.round(ok.reduce((sum, result) => sum + result.bytes, 0) / ok.length) : 0,
+};
+
+if (outPath) {
+  await fs.mkdir(outPath.replace(/[^/]+$/, '') || '.', { recursive: true });
+  await fs.writeFile(outPath, `${JSON.stringify({ summary, results }, null, 2)}\n`);
+  console.log('');
+  console.log(`saved run to ${outPath} (compare with: node scripts/compare-runs.mjs ${outPath} …)`);
 }

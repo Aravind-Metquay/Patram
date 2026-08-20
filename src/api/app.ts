@@ -2,6 +2,7 @@ import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import { config } from '../config/index.js';
 import { AppError, isAppError } from '../shared/errors.js';
+import { metrics } from '../shared/metrics.js';
 import type { Services } from './context.js';
 import { registerAuth } from './plugins/auth.js';
 import { registerHealthRoutes } from './routes/health.js';
@@ -24,10 +25,24 @@ export async function buildApp(services: Services): Promise<FastifyInstance> {
     requestTimeout: config.api.requestTimeoutMs,
     trustProxy: config.api.trustProxy,
     requestIdHeader: 'x-request-id',
+    disableRequestLogging: !config.observability.logHttpRequests,
     ajv: { customOptions: { allErrors: false, coerceTypes: false, removeAdditional: false } },
   });
 
   app.decorate('services', services);
+
+  // Per-request metrics, labelled by route pattern rather than URL so job ids
+  // do not explode the label cardinality.
+  app.addHook('onResponse', async (request, reply) => {
+    const route = request.routeOptions?.url ?? 'unknown';
+    const labels = {
+      method: request.method,
+      route,
+      status: String(reply.statusCode),
+    };
+    metrics.httpRequests.inc(labels);
+    metrics.httpSeconds.observe(labels, reply.elapsedTime / 1000);
+  });
 
   // Order matters: authentication runs first so the rate limiter can key on the
   // API key rather than an easily-spoofed client address.

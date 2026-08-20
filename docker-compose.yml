@@ -23,6 +23,12 @@ services:
         condition: service_healthy
       gotenberg:
         condition: service_started
+    logging:
+      driver: json-file
+      options:
+        # A load test can produce a lot of lines; cap what a container keeps.
+        max-size: "20m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:8080/health"]
       interval: 15s
@@ -49,6 +55,12 @@ services:
         condition: service_healthy
       gotenberg:
         condition: service_started
+    logging:
+      driver: json-file
+      options:
+        # A load test can produce a lot of lines; cap what a container keeps.
+        max-size: "20m"
+        max-file: "5"
 
   redis:
     image: redis:7-alpine
@@ -68,6 +80,12 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        # A load test can produce a lot of lines; cap what a container keeps.
+        max-size: "20m"
+        max-file: "5"
 
   gotenberg:
     # Chromium-only image: no LibreOffice, since this service is HTML -> PDF.
@@ -92,15 +110,110 @@ services:
       - "--chromium-restart-after=50"
       - "--gotenberg-hide-banner=true"
       - "--log-level=info"
+      # Correlate Gotenberg's own log lines with our job ids, which the worker
+      # sends as the Gotenberg-Trace header.
+      - "--api-correlation-id-header=Gotenberg-Trace"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://127.0.0.1:3000/health"]
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        # A load test can produce a lot of lines; cap what a container keeps.
+        max-size: "20m"
+        max-file: "5"
     # Uncomment on a small VPS to keep Chromium from taking the host down:
     # mem_limit: 1g
+
+  # ---------------------------------------------------------------------------
+  # Monitoring stack. Off by default; start it with:
+  #   docker compose --profile monitoring up -d
+  # Nothing here is required by the service - it exists to size the machine.
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    ports:
+      # Bound to localhost: reach it over an SSH tunnel
+      #   ssh -L 3001:localhost:3001 user@vps
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Host CPU (including steal), memory, disk and network.
+  node-exporter:
+    image: prom/node-exporter:v1.9.0
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    pid: host
+    command:
+      - "--path.rootfs=/host"
+      - "--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+)($$|/)"
+    volumes:
+      - /:/host:ro,rslave
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Per-container CPU and memory - this is how you watch Chromium's footprint.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   pdf_data:
   redis_data:
+  prometheus_data:
+  grafana_data:
