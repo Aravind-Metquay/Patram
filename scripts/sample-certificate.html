@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Certificate of Calibration</title>
+    <!-- Remote stylesheet on purpose: this exercises Chromium's ability to
+         fetch external resources while rendering. Drop it if the render host
+         has no outbound network access. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap"
+    />
+    <style>
+      :root {
+        --ink: #16212e;
+        --muted: #5a6b7d;
+        --line: #d3dbe4;
+        --accent: #0f5c8c;
+      }
+      * { box-sizing: border-box; }
+      body {
+        font-family: 'Inter', -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        color: var(--ink);
+        font-size: 10.5pt;
+        line-height: 1.45;
+        margin: 0;
+      }
+      header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        border-bottom: 3px solid var(--accent);
+        padding-bottom: 12px;
+      }
+      .brand { display: flex; gap: 12px; align-items: center; }
+      .brand h1 { font-size: 15pt; margin: 0; letter-spacing: 0.02em; }
+      .brand p { margin: 2px 0 0; color: var(--muted); font-size: 8.5pt; }
+      .doc-meta { text-align: right; font-size: 9pt; color: var(--muted); }
+      .doc-meta strong { color: var(--ink); display: block; font-size: 11pt; }
+      h2 {
+        font-size: 11pt;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--accent);
+        margin: 22px 0 8px;
+      }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; }
+      .field { display: flex; justify-content: space-between; border-bottom: 1px dotted var(--line); padding: 3px 0; }
+      .field span:first-child { color: var(--muted); }
+      table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+      thead th {
+        background: #eef4f9;
+        border: 1px solid var(--line);
+        font-size: 8.5pt;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding: 6px 8px;
+        text-align: right;
+      }
+      thead th:first-child { text-align: left; }
+      tbody td { border: 1px solid var(--line); padding: 5px 8px; text-align: right; font-variant-numeric: tabular-nums; }
+      tbody td:first-child { text-align: left; }
+      tbody tr:nth-child(even) td { background: #fafcfe; }
+      tr { page-break-inside: avoid; }
+      thead { display: table-header-group; }
+      .pass { color: #1d7a4c; font-weight: 600; }
+      .note { font-size: 9pt; color: var(--muted); }
+      .signatures { display: flex; gap: 40px; margin-top: 32px; page-break-inside: avoid; }
+      .signature { flex: 1; }
+      .signature .line { border-top: 1px solid var(--ink); margin-top: 42px; padding-top: 4px; font-size: 9pt; }
+      .page-break { page-break-before: always; }
+      .stamp {
+        border: 2px solid var(--accent);
+        color: var(--accent);
+        border-radius: 4px;
+        padding: 6px 10px;
+        font-size: 9pt;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        display: inline-block;
+        transform: rotate(-3deg);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <!-- Inline SVG: no network round-trip, always renders. -->
+        <svg width="46" height="46" viewBox="0 0 46 46" role="img" aria-label="Logo">
+          <rect width="46" height="46" rx="10" fill="#0f5c8c" />
+          <path d="M11 30l7-14 5 9 4-6 8 11z" fill="#ffffff" />
+          <circle cx="33" cy="14" r="4" fill="#7fc4e8" />
+        </svg>
+        <div>
+          <h1>Precision Metrology Laboratory</h1>
+          <p>ISO/IEC 17025 accredited &middot; Lab code PML-4471 &middot; Bengaluru, IN</p>
+        </div>
+      </div>
+      <div class="doc-meta">
+        <strong>Certificate of Calibration</strong>
+        No. PML-2026-004871<br />
+        Issued 2026-03-14<br />
+        Page 1 of 2
+      </div>
+    </header>
+
+    <h2>Instrument under test</h2>
+    <div class="grid">
+      <div class="field"><span>Description</span><span>Digital Pressure Gauge</span></div>
+      <div class="field"><span>Manufacturer</span><span>Ashcroft</span></div>
+      <div class="field"><span>Model</span><span>2089A-0400</span></div>
+      <div class="field"><span>Serial number</span><span>SN-88422-19</span></div>
+      <div class="field"><span>Range</span><span>0 to 400 bar</span></div>
+      <div class="field"><span>Resolution</span><span>0.01 bar</span></div>
+      <div class="field"><span>Customer</span><span>Northline Energy Services</span></div>
+      <div class="field"><span>Asset ID</span><span>NES-PG-0142</span></div>
+    </div>
+
+    <h2>Conditions and references</h2>
+    <div class="grid">
+      <div class="field"><span>Ambient temperature</span><span>23.1 &deg;C &plusmn; 0.4 &deg;C</span></div>
+      <div class="field"><span>Relative humidity</span><span>47 % &plusmn; 3 %</span></div>
+      <div class="field"><span>Reference standard</span><span>Fluke 2700G-BG400K</span></div>
+      <div class="field"><span>Reference certificate</span><span>NPL-2025-77213</span></div>
+      <div class="field"><span>Procedure</span><span>PML-WI-014 rev. 6</span></div>
+      <div class="field"><span>Calibration date</span><span>2026-03-12</span></div>
+    </div>
+
+    <h2>Measurement results</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Nominal (bar)</th>
+          <th>Reference (bar)</th>
+          <th>Indicated (bar)</th>
+          <th>Error (bar)</th>
+          <th>Tolerance (bar)</th>
+          <th>Uncertainty (k=2)</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>0.00</td><td>0.000</td><td>0.00</td><td>0.000</td><td>&plusmn;0.400</td><td>0.052</td><td class="pass">Pass</td></tr>
+        <tr><td>40.00</td><td>40.012</td><td>40.03</td><td>0.018</td><td>&plusmn;0.400</td><td>0.058</td><td class="pass">Pass</td></tr>
+        <tr><td>80.00</td><td>79.994</td><td>80.02</td><td>0.026</td><td>&plusmn;0.400</td><td>0.061</td><td class="pass">Pass</td></tr>
+        <tr><td>120.00</td><td>120.006</td><td>120.05</td><td>0.044</td><td>&plusmn;0.400</td><td>0.067</td><td class="pass">Pass</td></tr>
+        <tr><td>160.00</td><td>159.988</td><td>160.04</td><td>0.052</td><td>&plusmn;0.400</td><td>0.072</td><td class="pass">Pass</td></tr>
+        <tr><td>200.00</td><td>200.014</td><td>200.09</td><td>0.076</td><td>&plusmn;0.400</td><td>0.079</td><td class="pass">Pass</td></tr>
+        <tr><td>240.00</td><td>239.996</td><td>240.07</td><td>0.074</td><td>&plusmn;0.400</td><td>0.085</td><td class="pass">Pass</td></tr>
+        <tr><td>280.00</td><td>280.008</td><td>280.11</td><td>0.102</td><td>&plusmn;0.400</td><td>0.091</td><td class="pass">Pass</td></tr>
+        <tr><td>320.00</td><td>319.982</td><td>320.06</td><td>0.078</td><td>&plusmn;0.400</td><td>0.098</td><td class="pass">Pass</td></tr>
+        <tr><td>360.00</td><td>360.010</td><td>360.13</td><td>0.120</td><td>&plusmn;0.400</td><td>0.104</td><td class="pass">Pass</td></tr>
+        <tr><td>400.00</td><td>400.004</td><td>400.15</td><td>0.146</td><td>&plusmn;0.400</td><td>0.112</td><td class="pass">Pass</td></tr>
+        <tr><td>200.00 (down)</td><td>200.002</td><td>200.06</td><td>0.058</td><td>&plusmn;0.400</td><td>0.079</td><td class="pass">Pass</td></tr>
+        <tr><td>0.00 (down)</td><td>0.000</td><td>0.01</td><td>0.010</td><td>&plusmn;0.400</td><td>0.052</td><td class="pass">Pass</td></tr>
+      </tbody>
+    </table>
+    <p class="note">
+      Reported expanded uncertainty is stated at a coverage probability of approximately 95 %
+      (k = 2). Results relate only to the item calibrated. Errors are indicated minus reference.
+    </p>
+
+    <div class="page-break"></div>
+
+    <h2>Statement of conformity</h2>
+    <p>
+      All measured points fall within the manufacturer's stated tolerance of &plusmn;0.1 % of full
+      scale. A simple acceptance decision rule was applied, with no guard band, in accordance with
+      ILAC-G8:09/2019. The instrument is fit for continued service.
+    </p>
+    <p class="stamp">Calibration valid until 2027-03-12</p>
+
+    <h2>Traceability</h2>
+    <p>
+      Measurements are traceable to national standards through the reference instrument identified
+      above. Calibration was performed using a dead-weight comparison method at the laboratory's
+      controlled bench, with a 30 minute thermal soak before the first measurement point.
+    </p>
+
+    <div class="signatures">
+      <div class="signature">
+        <div class="line">Calibrated by &mdash; R. Iyer, Metrologist</div>
+      </div>
+      <div class="signature">
+        <div class="line">Approved by &mdash; S. Menon, Technical Manager</div>
+      </div>
+    </div>
+    <p class="note">
+      This certificate may not be reproduced other than in full, except with the prior written
+      approval of the issuing laboratory.
+    </p>
+  </body>
+</html>

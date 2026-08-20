@@ -1,0 +1,40 @@
+{
+  "name": "pdf-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "HTML to PDF service: Fastify API + BullMQ worker + Gotenberg (Chromium)",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev:api": "tsx watch src/api/server.ts",
+    "dev:worker": "tsx watch src/worker/worker.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start:api": "node dist/api/server.js",
+    "start:worker": "node dist/worker/worker.js",
+    "loadtest": "node scripts/loadtest.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.876.0",
+    "@aws-sdk/s3-request-presigner": "^3.876.0",
+    "@fastify/rate-limit": "^10.3.0",
+    "bullmq": "^5.58.0",
+    "fastify": "^5.6.0",
+    "ioredis": "^5.7.0",
+    "pino": "^9.7.0",
+    "ulid": "^3.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "packageManager": "pnpm@10.33.0"
+}
