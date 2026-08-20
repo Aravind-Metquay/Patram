@@ -113,7 +113,13 @@ export const config = {
 
   rateLimit: {
     enabled: bool('RATE_LIMIT_ENABLED', true),
+    /** Applies to render requests - the ones that cost Chromium time. */
     max: int('RATE_LIMIT_MAX', 60),
+    /**
+     * Status polls and downloads are cheap and clients are expected to poll,
+     * so reads get their own, much higher allowance.
+     */
+    readMax: int('RATE_LIMIT_READ_MAX', 600),
     windowMs: int('RATE_LIMIT_WINDOW_MS', 60_000),
   },
 

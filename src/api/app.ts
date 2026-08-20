@@ -49,7 +49,9 @@ export async function buildApp(services: Services): Promise<FastifyInstance> {
         new AppError(
           429,
           'RATE_LIMITED',
-          `Rate limit exceeded: ${context.max} requests per ${context.after}`,
+          `Rate limit exceeded: ${context.max} requests per ${Math.round(
+            config.rateLimit.windowMs / 1000,
+          )}s. Retry in ${Math.ceil(context.ttl / 1000)}s.`,
           { retryable: true, details: { retry_after_ms: context.ttl } },
         ),
     });

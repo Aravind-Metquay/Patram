@@ -239,7 +239,8 @@ values worth knowing:
 | `MAX_PDF_BYTES` | `52428800` | Enforced while streaming Gotenberg's output |
 | `MAX_QUEUED_JOBS` | `1000` | Above this, new requests get `QUEUE_FULL` |
 | `JOB_ATTEMPTS` | `2` | Retries for retryable failures only |
-| `RATE_LIMIT_MAX` | `60` per minute | Per API key, backed by Redis |
+| `RATE_LIMIT_MAX` | `60` per minute | Render requests per API key, backed by Redis |
+| `RATE_LIMIT_READ_MAX` | `600` per minute | Status polls and downloads, which clients are expected to do often |
 | `PDF_TTL_SECONDS` | `3600` | PDFs and job records expire together |
 | `FAILED_JOB_TTL_SECONDS` | `86400` | Failed jobs keep their input HTML |
 | `SYNC_TIMEOUT_MS` | `25000` | When `/v1/pdf/sync` gives up waiting |
@@ -281,6 +282,15 @@ Reports throughput plus p50/p95/max for end-to-end latency, Gotenberg render
 time and queue wait, which is what tells you whether raising
 `WORKER_CONCURRENCY` and `--chromium-max-concurrency` past 1 is justified. Raise
 them together, one step at a time, and watch memory and CPU steal.
+
+A run larger than `RATE_LIMIT_MAX` (60 renders/minute by default) will hit the
+rate limit. The script waits out `429`s and excludes that waiting from the
+reported latencies, but for a clean measurement raise the limit for the run:
+
+```env
+RATE_LIMIT_MAX=10000
+RATE_LIMIT_READ_MAX=100000
+```
 
 ## Layout
 

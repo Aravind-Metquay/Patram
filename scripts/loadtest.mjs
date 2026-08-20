@@ -22,8 +22,11 @@ const apiKey = args.get('key') ?? process.env.PDF_API_KEY;
 const count = Number(args.get('count') ?? 10);
 const concurrency = Number(args.get('concurrency') ?? 5);
 const htmlPath = args.get('html');
-const pollMs = Number(args.get('poll') ?? 250);
+const pollMs = Number(args.get('poll') ?? 500);
 const timeoutMs = Number(args.get('timeout') ?? 120_000);
+// A load test is expected to hit the rate limit; waiting it out is the point,
+// so 429s are retried rather than counted as failures.
+const maxRateLimitWaitMs = Number(args.get('max-429-wait') ?? 70_000);
 
 if (!apiKey) {
   console.error('Missing API key: pass --key or set PDF_API_KEY');
@@ -39,14 +42,46 @@ const headers = {
   'content-type': 'application/json',
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let rateLimitedRequests = 0;
+let rateLimitWaitMs = 0;
+
+/**
+ * Sends a request, waiting out 429s instead of failing on them. Time spent
+ * waiting is excluded from the reported latencies - it says something about the
+ * limit, not about render speed.
+ */
+async function requestWithBackoff(url, init) {
+  let waited = 0;
+  for (;;) {
+    const response = await fetch(url, init);
+    if (response.status !== 429) return { response, waitedMs: waited };
+
+    const retryAfterMs = Math.min(
+      Math.max(Number(response.headers.get('retry-after') ?? 1) * 1000, 500),
+      maxRateLimitWaitMs,
+    );
+    await response.arrayBuffer().catch(() => undefined);
+    if (waited + retryAfterMs > maxRateLimitWaitMs) return { response, waitedMs: waited };
+
+    rateLimitedRequests += 1;
+    await sleep(retryAfterMs);
+    waited += retryAfterMs;
+    rateLimitWaitMs += retryAfterMs;
+  }
+}
+
 async function runOne(index) {
   const startedAt = Date.now();
-  const enqueue = await fetch(`${baseUrl}/v1/pdf`, {
+  let waitedMs = 0;
+  const enqueued = await requestWithBackoff(`${baseUrl}/v1/pdf`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ html, filename: `loadtest-${index}.pdf` }),
   });
-  const enqueuedMs = Date.now() - startedAt;
+  waitedMs += enqueued.waitedMs;
+  const enqueue = enqueued.response;
+  const enqueuedMs = Date.now() - startedAt - waitedMs;
 
   if (enqueue.status !== 202 && enqueue.status !== 200) {
     return { ok: false, stage: 'enqueue', status: enqueue.status, body: await enqueue.text() };
@@ -54,15 +89,23 @@ async function runOne(index) {
   const { id } = await enqueue.json();
 
   for (;;) {
-    if (Date.now() - startedAt > timeoutMs) {
+    if (Date.now() - startedAt - waitedMs > timeoutMs) {
       return { ok: false, stage: 'timeout', id };
     }
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-    const statusResponse = await fetch(`${baseUrl}/v1/jobs/${id}`, {
+    await sleep(pollMs);
+    const polled = await requestWithBackoff(`${baseUrl}/v1/jobs/${id}`, {
       headers: { authorization: headers.authorization },
     });
+    waitedMs += polled.waitedMs;
+    const statusResponse = polled.response;
     if (!statusResponse.ok) {
-      return { ok: false, stage: 'status', status: statusResponse.status, id };
+      return {
+        ok: false,
+        stage: 'status',
+        status: statusResponse.status,
+        id,
+        body: await statusResponse.text(),
+      };
     }
     const job = await statusResponse.json();
     if (job.status === 'completed') {
@@ -70,7 +113,7 @@ async function runOne(index) {
         ok: true,
         id,
         enqueuedMs,
-        totalMs: Date.now() - startedAt,
+        totalMs: Date.now() - startedAt - waitedMs,
         renderMs: job.result?.render_ms ?? 0,
         workerMs: job.result?.total_ms ?? 0,
         bytes: job.result?.bytes ?? 0,
@@ -114,7 +157,17 @@ console.log('');
 console.log(`completed        ${ok.length}/${count}`);
 console.log(`failed           ${failed.length}`);
 console.log(`wall clock       ${wallMs} ms`);
-console.log(`throughput       ${(ok.length / (wallMs / 1000)).toFixed(2)} pdf/s`);
+console.log(
+  `throughput       ${(ok.length / (wallMs / 1000)).toFixed(2)} pdf/s${
+    rateLimitWaitMs > 0 ? ' (wall clock includes rate-limit waiting)' : ''
+  }`,
+);
+if (rateLimitedRequests > 0) {
+  console.log(
+    `rate limited     ${rateLimitedRequests} requests retried after ${Math.round(rateLimitWaitMs / 1000)}s of waiting`,
+  );
+  console.log('                 (raise RATE_LIMIT_MAX / RATE_LIMIT_READ_MAX to measure without it)');
+}
 console.log('');
 console.log('end-to-end       p50 %d ms  p95 %d ms  max %d ms', percentile(totals, 50), percentile(totals, 95), percentile(totals, 100));
 console.log('gotenberg render p50 %d ms  p95 %d ms  max %d ms', percentile(renders, 50), percentile(renders, 95), percentile(renders, 100));

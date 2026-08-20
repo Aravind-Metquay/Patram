@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { config } from '../../config/index.js';
 import { toPublicStatus } from '../../queue/pdf.queue.js';
 import { AppError, badRequest, parseFailure } from '../../shared/errors.js';
 import { isJobId } from '../../shared/ids.js';
@@ -15,19 +16,29 @@ const paramsSchema = {
   properties: { id: { type: 'string', minLength: 1, maxLength: 64 } },
 } as const;
 
-export function registerJobRoutes(app: FastifyInstance): void {
-  app.get<{ Params: JobParams }>(
-    '/v1/jobs/:id',
-    { schema: { params: paramsSchema } },
-    async (request) => {
-      const job = await requireJob(app, request.params.id);
-      return toJobView(app.services, job);
+/**
+ * Polling a job is cheap, and clients are told to poll, so reads run on their
+ * own allowance instead of eating the render budget.
+ */
+const readRouteOptions = {
+  schema: { params: paramsSchema },
+  config: {
+    rateLimit: {
+      max: config.rateLimit.readMax,
+      timeWindow: config.rateLimit.windowMs,
     },
-  );
+  },
+} as const;
+
+export function registerJobRoutes(app: FastifyInstance): void {
+  app.get<{ Params: JobParams }>('/v1/jobs/:id', readRouteOptions, async (request) => {
+    const job = await requireJob(app, request.params.id);
+    return toJobView(app.services, job);
+  });
 
   app.get<{ Params: JobParams }>(
     '/v1/jobs/:id/pdf',
-    { schema: { params: paramsSchema } },
+    readRouteOptions,
     async (request, reply) => {
       const job = await requireJob(app, request.params.id);
       const status = toPublicStatus(await job.getState());
