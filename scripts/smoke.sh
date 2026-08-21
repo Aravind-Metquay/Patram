@@ -58,4 +58,43 @@ echo "==> GET /v1/jobs/$JOB_ID/pdf -> $OUT_DIR/smoke-async.pdf"
 curl -fsS "$BASE/v1/jobs/$JOB_ID/pdf" -H "authorization: Bearer $KEY" -o "$OUT_DIR/smoke-async.pdf"
 ls -l "$OUT_DIR/smoke-async.pdf"
 
+echo "==> POST /v1/pdf with a blocked upload destination (expecting 400)"
+# The SSRF guard is the one part of the upload path that must hold even when
+# nothing else is configured, so it is checked here rather than only by hand.
+curl -sS -o "$OUT_DIR/smoke-blocked.json" -w '    status %{http_code}\n' \
+  -X POST "$BASE/v1/pdf" \
+  -H "authorization: Bearer $KEY" -H 'content-type: application/json' \
+  -d '{"html":"<p>x</p>","upload":{"url":"https://169.254.169.254/latest/meta-data/"}}'
+grep -o '"code":"[^"]*"' "$OUT_DIR/smoke-blocked.json" | head -1
+
+echo "==> POST /v1/pdf with a reserved upload header (expecting 400)"
+curl -sS -o "$OUT_DIR/smoke-header.json" -w '    status %{http_code}\n' \
+  -X POST "$BASE/v1/pdf" \
+  -H "authorization: Bearer $KEY" -H 'content-type: application/json' \
+  -d '{"html":"<p>x</p>","upload":{"url":"https://storage.example.com/o.pdf","headers":{"Host":"evil.example"}}}'
+grep -o '"code":"[^"]*"' "$OUT_DIR/smoke-header.json" | head -1
+
+# The happy path needs a real presigned URL, so it is opt-in:
+#   SMOKE_UPLOAD_URL="https://...signed..." ./scripts/smoke.sh
+if [ -n "${SMOKE_UPLOAD_URL:-}" ]; then
+  echo "==> POST /v1/pdf/sync with upload -> JSON, not bytes"
+  UPLOAD_PAYLOAD="$OUT_DIR/payload-upload.json"
+  {
+    printf '{"filename":"smoke.pdf","html":'
+    node -e 'process.stdout.write(JSON.stringify(require("fs").readFileSync(process.argv[1],"utf8")))' "$HTML_FILE"
+    printf ',"upload":{"url":'
+    node -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$SMOKE_UPLOAD_URL"
+    printf '}}'
+  } > "$UPLOAD_PAYLOAD"
+
+  curl -fsS -X POST "$BASE/v1/pdf/sync" \
+    -H "authorization: Bearer $KEY" -H 'content-type: application/json' \
+    --data-binary @"$UPLOAD_PAYLOAD" -o "$OUT_DIR/smoke-upload.json" \
+    -D "$OUT_DIR/smoke-upload.headers"
+  grep -iE '^(HTTP/|content-type)' "$OUT_DIR/smoke-upload.headers" || true
+  cat "$OUT_DIR/smoke-upload.json"; echo
+else
+  echo "==> skipping the upload happy path (set SMOKE_UPLOAD_URL to a presigned PUT URL)"
+fi
+
 echo "==> done"

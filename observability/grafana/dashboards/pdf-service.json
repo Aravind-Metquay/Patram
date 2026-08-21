@@ -1132,6 +1132,74 @@
       ]
     },
     {
+      "type": "timeseries",
+      "title": "Destination upload duration",
+      "id": 20,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 51
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(pdf_upload_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(pdf_upload_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95"
+        }
+      ],
+      "description": "Time uploading the PDF to a caller-supplied presigned URL. Empty unless callers use `upload`."
+    },
+    {
+      "type": "timeseries",
+      "title": "Upload outcomes",
+      "id": 21,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 51
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(pdf_upload_total[5m]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "description": "uploaded / rejected / throttled / timeout / blocked. Failure codes also appear in \"Job failures by code\"."
+    },
+    {
       "id": 19,
       "type": "timeseries",
       "title": "Storage operation duration (p95)",

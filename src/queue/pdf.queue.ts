@@ -1,6 +1,7 @@
 import { Queue, type JobsOptions } from 'bullmq';
 import type { Redis } from 'ioredis';
 import { config } from '../config/index.js';
+import type { UploadTarget } from '../upload/destination.js';
 import type { PdfOptions } from '../shared/pdf-options.js';
 
 export const PDF_JOB_NAME = 'render';
@@ -17,6 +18,14 @@ export interface PdfJobData {
   apiKeyId: string;
   requestedAt: string;
   idempotencyKey?: string | undefined;
+  /**
+   * Where to PUT the finished PDF, if the caller asked for that.
+   *
+   * The signed URL is a bearer credential and it lives here for the life of the
+   * job - and for FAILED_JOB_TTL_SECONDS on a failed one. It is never logged and
+   * never echoed back; callers should mint short-lived URLs (~15 minutes).
+   */
+  upload?: UploadTarget | undefined;
 }
 
 export interface PdfJobResult {
@@ -28,6 +37,10 @@ export interface PdfJobResult {
   totalMs: number;
   completedAt: string;
   expiresAt: string;
+  /** So a caller can verify the stored object without trusting our word for it. */
+  sha256?: string;
+  /** Time spent uploading to the caller's destination, when one was given. */
+  uploadMs?: number;
 }
 
 export type PdfQueue = Queue<PdfJobData, PdfJobResult, typeof PDF_JOB_NAME>;

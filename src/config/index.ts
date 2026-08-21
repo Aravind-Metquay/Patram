@@ -40,6 +40,16 @@ function bool(name: string, fallback: boolean): boolean {
   throw new Error(`Environment variable ${name} must be a boolean, got "${value}"`);
 }
 
+/** Comma-separated list, lower-cased and stripped of leading dots. */
+function list(name: string): readonly string[] {
+  const value = raw(name);
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase().replace(/^\.+/, ''))
+    .filter(Boolean);
+}
+
 export interface ApiKey {
   /** Stable, non-secret identifier used in logs, rate limits and idempotency keys. */
   id: string;
@@ -155,6 +165,31 @@ export const config = {
     enabled: bool('SYNC_ENABLED', true),
     /** How long POST /v1/pdf/sync waits before handing back a job id instead. */
     timeoutMs: int('SYNC_TIMEOUT_MS', 25_000),
+  },
+
+  /**
+   * Uploading the finished PDF to a presigned URL the caller supplies. Patram
+   * never learns the provider or the credentials - the signed URL is the whole
+   * authorisation - but it does make an outbound request to an address a client
+   * chose, so the guards here are load-bearing rather than cosmetic.
+   */
+  upload: {
+    enabled: bool('UPLOAD_ENABLED', true),
+    timeoutMs: int('UPLOAD_TIMEOUT_MS', 30_000),
+    /** http:// destinations are a development affordance, never a production one. */
+    allowHttp: bool('UPLOAD_ALLOW_HTTP', false),
+    /** Escape hatch for a MinIO sitting on the same network. Off by default. */
+    allowPrivateIps: bool('UPLOAD_ALLOW_PRIVATE_IPS', false),
+    /**
+     * How much of the destination's response body to keep. It is what tells a
+     * caller `SignatureDoesNotMatch` from `AccessDenied`, so it is echoed back;
+     * set to 0 on a shared instance to stop echoing it entirely.
+     */
+    maxResponseBytes: int('UPLOAD_MAX_RESPONSE_BYTES', 4096),
+    /** Optional host suffix filter. Empty means any public host is allowed. */
+    hostAllowlist: list('UPLOAD_HOST_ALLOWLIST'),
+    /** Extra in-step tries for a destination that answers 429/408. */
+    throttleRetries: int('UPLOAD_THROTTLE_RETRIES', 2),
   },
 
   gotenberg: {

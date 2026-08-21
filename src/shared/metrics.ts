@@ -66,6 +66,23 @@ export const metrics = {
     buckets: BYTE_BUCKETS,
     registers: [registry],
   }),
+  /**
+   * Uploads to a caller-supplied destination. Deliberately not labelled by host:
+   * that is client-controlled and would be unbounded cardinality. The host goes
+   * in the logs, where it belongs.
+   */
+  uploadTotal: new Counter({
+    name: 'pdf_upload_total',
+    help: 'Upload attempts against a caller-supplied destination',
+    labelNames: ['outcome'],
+    registers: [registry],
+  }),
+  uploadSeconds: new Histogram({
+    name: 'pdf_upload_duration_seconds',
+    help: 'Time spent uploading to a caller-supplied destination',
+    buckets: DURATION_BUCKETS,
+    registers: [registry],
+  }),
   activeJobs: new Gauge({
     name: 'pdf_active_jobs',
     help: 'Renders in flight in this worker process',
