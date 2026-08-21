@@ -10,6 +10,12 @@ import {
 import { AppError, parseFailure, payloadTooLarge } from '../shared/errors.js';
 import { newJobId } from '../shared/ids.js';
 import { withDefaults, type PdfOptions } from '../shared/pdf-options.js';
+import {
+  destinationIdentity,
+  validateDestination,
+  type UploadReport,
+  type UploadTarget,
+} from '../upload/destination.js';
 import { objectKeys } from '../storage/index.js';
 import type { Services } from './context.js';
 import * as idempotency from './idempotency.js';
@@ -22,6 +28,7 @@ export interface CreatePdfInput {
   filename?: string | undefined;
   apiKeyId: string;
   idempotencyKey?: string | undefined;
+  upload?: UploadTarget | undefined;
 }
 
 export interface CreatePdfOutcome {
@@ -45,8 +52,16 @@ export interface JobView {
     total_ms: number;
     expires_at: string;
     download_url: string | null;
+    sha256?: string;
+    upload_ms?: number;
   } | null;
-  error: { code: string; message: string; retryable: boolean } | null;
+  /**
+   * Present whenever the job carried an `upload`, including when it failed -
+   * which is the point: a failed upload has to say what the destination said.
+   * Never carries the signed URL, only its host and path.
+   */
+  upload: UploadReport | null;
+  error: { code: string; message: string; retryable: boolean; details?: unknown } | null;
 }
 
 /**
@@ -68,10 +83,18 @@ export async function createPdfJob(
   }
 
   const options = withDefaults(input.options);
+  // Fail a bad destination here rather than letting it take a queue slot it can
+  // never use. `checkExpiry` only applies at enqueue: once the job is queued an
+  // expired signature is the destination's 403 to report, not a validation error.
+  if (input.upload) validateDestination(input.upload, { checkExpiry: true });
   const fingerprint = idempotency.fingerprint({
     html: input.html,
     options,
     filename: input.filename ?? null,
+    // The destination's identity, not the signed URL: its signature differs on
+    // every mint, so hashing the whole URL would make a replayed idempotency key
+    // conflict with itself.
+    upload: destinationIdentity(input.upload),
   });
 
   if (input.idempotencyKey) {
@@ -111,6 +134,7 @@ export async function createPdfJob(
         apiKeyId: input.apiKeyId,
         requestedAt: new Date().toISOString(),
         idempotencyKey: input.idempotencyKey,
+        upload: input.upload,
       },
       { jobId },
     );
@@ -166,10 +190,49 @@ export async function loadJob(services: Services, jobId: string): Promise<PdfJob
   return (job as PdfJob | undefined) ?? null;
 }
 
+/**
+ * The worker records each upload try with `job.updateProgress`, because the
+ * worker-to-API failure channel is a single string (`CODE|retryable|message`)
+ * and cannot carry structure. Progress can, it survives retries, and it is
+ * still there on a failed job.
+ */
+export function uploadReport(job: PdfJob): UploadReport | null {
+  const progress = job.progress;
+  if (!progress || typeof progress !== 'object') return null;
+  const report = (progress as { upload?: UploadReport }).upload;
+  return report && Array.isArray(report.attempts) ? report : null;
+}
+
+/**
+ * Turns the last upload attempt into `error.details`, so a caller sees the
+ * status and the provider's own message - `SignatureDoesNotMatch` against
+ * `AccessDenied` against `RequestTimeTooSkewed` is the whole diagnosis, and a
+ * status code alone cannot say which.
+ */
+function withUploadDetails(
+  failure: { code: string; message: string; retryable: boolean },
+  report: UploadReport | null,
+): JobView['error'] {
+  if (!report || !failure.code.startsWith('UPLOAD_')) return failure;
+  const last = report.attempts[report.attempts.length - 1];
+  if (!last) return failure;
+  return {
+    ...failure,
+    details: {
+      host: report.host,
+      path: report.path,
+      ...(last.status === undefined ? {} : { status: last.status }),
+      ...(last.error === undefined ? {} : { reason: last.error }),
+      ...(last.response === undefined ? {} : { response: last.response }),
+    },
+  };
+}
+
 export async function toJobView(services: Services, job: PdfJob): Promise<JobView> {
   const status = toPublicStatus(await job.getState());
   const jobId = job.data.jobId ?? String(job.id);
   const result = status === 'completed' ? (job.returnvalue as PdfJobResult | undefined) : undefined;
+  const report = uploadReport(job);
 
   let downloadUrl: string | null = null;
   if (result) {
@@ -198,9 +261,13 @@ export async function toJobView(services: Services, job: PdfJob): Promise<JobVie
           total_ms: result.totalMs,
           expires_at: result.expiresAt,
           download_url: downloadUrl,
+          ...(result.sha256 === undefined ? {} : { sha256: result.sha256 }),
+          ...(result.uploadMs === undefined ? {} : { upload_ms: result.uploadMs }),
         }
       : null,
-    error: status === 'failed' ? parseFailure(job.failedReason) : null,
+    upload: report,
+    error:
+      status === 'failed' ? withUploadDetails(parseFailure(job.failedReason), report) : null,
   };
 }
 
@@ -261,7 +328,20 @@ export function failureToStatus(code: string): number {
       return 410;
     case 'RENDERER_UNAVAILABLE':
     case 'RENDERER_ERROR':
+    case 'UPLOAD_REJECTED':
+    case 'UPLOAD_REDIRECTED':
+    case 'UPLOAD_THROTTLED':
+    case 'UPLOAD_CORRUPTED':
+    case 'UPLOAD_FAILED':
       return 502;
+    case 'UPLOAD_TIMEOUT':
+      return 504;
+    case 'INVALID_UPLOAD_URL':
+    case 'INVALID_UPLOAD_HEADER':
+    case 'UPLOAD_DESTINATION_BLOCKED':
+      return 400;
+    case 'UPLOAD_DISABLED':
+      return 501;
     default:
       return 500;
   }

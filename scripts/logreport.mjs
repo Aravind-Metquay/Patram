@@ -148,6 +148,8 @@ const stages = [
   ['input fetch', 'input_fetch_ms'],
   ['gotenberg render', 'render_ms'],
   ['storage upload', 'upload_ms'],
+  // Only present on jobs that carried an `upload` object.
+  ['destination upload', 'dest_upload_ms'],
   ['worker total', 'total_ms'],
 ];
 console.log('');
@@ -241,6 +243,7 @@ if (csvOut) {
     'input_fetch_ms',
     'render_ms',
     'upload_ms',
+    'dest_upload_ms',
     'total_ms',
     'html_bytes',
     'pdf_bytes',

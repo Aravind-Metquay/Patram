@@ -39,7 +39,10 @@ One per successful render, from the worker. It is the whole timing breakdown:
   "queue_wait_ms": 1616,     // enqueue → worker pickup: capacity pressure
   "input_fetch_ms": 3,       // reading the staged HTML (local disk or R2)
   "render_ms": 424,          // time inside Chromium
-  "upload_ms": 5,            // writing the PDF to storage
+  "upload_ms": 5,            // writing the PDF to *our* storage
+  "dest_upload_ms": 190,     // uploading to the caller's presigned URL, when asked
+  "dest_host": "acct.r2.cloudflarestorage.com",
+  "dest_status": 200,        // what the destination answered
   "delete_input_ms": 0,
   "total_ms": 434,           // worker time, excluding queue wait
   "html_bytes": 9017,
@@ -95,6 +98,8 @@ The API's vitals line adds queue state: `queue_waiting`, `queue_active`,
 | `render started` | worker | HTML loaded, calling Gotenberg |
 | `render completed` | worker | Includes `render_bytes_per_s` — falls as the box saturates |
 | `slow render` | worker | `render_ms` over `SLOW_RENDER_LOG_MS` (default 10 s), at warn |
+| `upload to destination completed` | worker | One per successful presigned upload: `dest_host`, `dest_status`, `dest_upload_ms`, `dest_verified`, and `url` — host and path only, never the signature |
+| `upload to destination failed` | worker | Same fields plus the `code`. The per-attempt history is on the job, readable from `GET /v1/jobs/:id` |
 | `job failed` | worker | `code`, `retryable`, `will_retry`, `attempt` of `attempts` |
 | `request completed` | api | Fastify access log with `responseTime` (off via `LOG_HTTP_REQUESTS=false`) |
 | `janitor removed expired objects` | worker | Retention sweep |

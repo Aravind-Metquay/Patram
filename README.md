@@ -168,6 +168,138 @@ If the render outlives `SYNC_TIMEOUT_MS` (default 25 s) the request returns
 `202` with the job id instead of holding the connection open — the job keeps
 going and can be polled. Set `SYNC_ENABLED=false` to remove the route.
 
+### Uploading to your own storage
+
+Instead of downloading the PDF and storing it yourself, hand over a presigned
+upload URL and Patram writes the object for you. Add `upload` to either render
+endpoint:
+
+```bash
+curl -X POST http://localhost:8080/v1/pdf \
+  -H "Authorization: Bearer $PDF_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "html": "<h1>Hello</h1>",
+    "upload": {
+      "url": "https://acct.r2.cloudflarestorage.com/certificates/123.pdf?X-Amz-Algorithm=…",
+      "method": "PUT",
+      "headers": { "Content-Type": "application/pdf" }
+    }
+  }'
+```
+
+| Field | | |
+| --- | --- | --- |
+| `url` | required | The presigned URL. `https` only unless `UPLOAD_ALLOW_HTTP=true`. |
+| `method` | `PUT` \| `POST` | Default `PUT`. The body is the raw PDF bytes. |
+| `headers` | object | Sent verbatim. Up to 20, names must be HTTP tokens. |
+
+Patram is storage-agnostic: S3, R2, GCS and Azure Blob all work, because all it
+does is make the request you described. It never sees your credentials — the
+signed URL *is* the authorization — and it never needs to know the object's
+permanent URL, because you already do. Store the **object key**, not the
+presigned URL, and mint a short-lived GET when someone asks for the file.
+
+`Content-Length` is always computed by Patram and is rejected as a caller
+header. `Content-Type` defaults to `application/pdf`, but a value you supply is
+passed through byte for byte.
+
+A completed job reports the upload instead of a download URL:
+
+```json
+{
+  "id": "pdf_01M0EZKPYVZFWG99WFS2741KG5",
+  "status": "completed",
+  "result": {
+    "bytes": 184223, "render_ms": 812, "upload_ms": 190, "total_ms": 1104,
+    "sha256": "9b2c…", "expires_at": "…", "download_url": null
+  },
+  "upload": {
+    "host": "acct.r2.cloudflarestorage.com",
+    "path": "/certificates/123.pdf",
+    "status": 200,
+    "verified": true,
+    "attempts": [{ "n": 1, "outcome": "uploaded", "status": 200, "ms": 190 }]
+  }
+}
+```
+
+`verified` compares the destination's `ETag` against the MD5 of what we sent —
+`true` on a match, `false` on a mismatch (which fails the job), and `null` when
+the provider returns an opaque ETag and there is nothing to compare. `sha256`
+lets you verify the stored object yourself. The signed URL is never echoed back
+or logged: only its host and path appear anywhere.
+
+`POST /v1/pdf/sync` with `upload` answers with this JSON rather than
+`application/pdf` — the PDF is already where you wanted it, and the upload
+result is the part you cannot get any other way. Without `upload` it still
+streams bytes exactly as before.
+
+**A render that cannot be delivered is a failed job.** Reporting success would
+leave you storing a permanent URL for an object that does not exist. The PDF
+stays in Patram's own storage for `PDF_TTL_SECONDS`, so `GET /v1/jobs/:id/pdf`
+is still there as a fallback, and a retry re-uploads it without re-rendering.
+
+Every attempt is recorded, so a failure says what the destination said:
+
+```json
+{
+  "status": "failed",
+  "error": {
+    "code": "UPLOAD_REJECTED", "retryable": false,
+    "message": "acct.r2.cloudflarestorage.com rejected the upload with 403",
+    "details": {
+      "host": "acct.r2.cloudflarestorage.com", "path": "/certificates/123.pdf", "status": 403,
+      "response": "<Error><Code>SignatureDoesNotMatch</Code>…"
+    }
+  },
+  "upload": { "attempts": [
+    { "n": 1, "outcome": "failed",   "status": 500, "ms": 118 },
+    { "n": 2, "outcome": "rejected", "status": 403, "ms":  95 }
+  ] }
+}
+```
+
+`SignatureDoesNotMatch` against `AccessDenied` against `RequestTimeTooSkewed` is
+the whole diagnosis, and a status code alone cannot tell you which — so up to
+`UPLOAD_MAX_RESPONSE_BYTES` of the destination's own response is passed through.
+Set it to `0` to stop echoing it.
+
+#### Presigning correctly
+
+Four mistakes account for almost every confusing `403`:
+
+- **Do not sign `Content-Length` or `Content-MD5`.** Neither is knowable before
+  the render, so a URL that lists them in `SignedHeaders` can never be satisfied.
+- **Presign with `UNSIGNED-PAYLOAD`** (the default for presigned URLs). You
+  cannot hash a PDF that does not exist yet.
+- **Sign `Content-Type` only if you also send it**, with the identical value.
+- **Mint a TTL that covers the queue.** The URL has to still be valid when the
+  worker reaches the job, not just when the request is accepted. `queue_wait_ms`
+  is in the logs; 15 minutes is a sane floor.
+
+#### Security
+
+Patram makes an outbound request to an address a client chose, so:
+
+- `https` only by default; `http` needs `UPLOAD_ALLOW_HTTP=true`.
+- Loopback, private, link-local (including cloud instance metadata at
+  `169.254.169.254`), CGNAT, multicast and reserved ranges are refused — both
+  when the URL is an IP literal and, separately, at connect time against the
+  address actually dialled, so DNS rebinding does not get through.
+  `UPLOAD_ALLOW_PRIVATE_IPS=true` opts out, for a MinIO on the same network.
+- Redirects are never followed. A `3xx` is `UPLOAD_REDIRECTED`.
+- Well-known service ports (22, 25, 3306, 6379, 9200, 27017, …) are refused.
+- Hop-by-hop and request-framing headers are rejected, and header values must be
+  printable ASCII, so nothing can be smuggled through them.
+- `UPLOAD_HOST_ALLOWLIST` narrows destinations to a suffix list. Empty by
+  default; set it on any instance whose API keys are handed to third parties.
+- `UPLOAD_ENABLED=false` removes the feature.
+
+One thing to know: the signed URL travels in the job record in Redis and stays
+there for `FAILED_JOB_TTL_SECONDS` on a failed job. It is never logged and never
+returned, but it is at rest — another reason to mint short-lived URLs.
+
 ### PDF options
 
 | Option | Type | Notes |
@@ -220,10 +352,23 @@ Every error has the same shape:
 | 502 | `RENDERER_ERROR` / `RENDERER_UNAVAILABLE` | Gotenberg failed or is down (retried) |
 | 503 | `QUEUE_FULL` | `MAX_QUEUED_JOBS` reached — backpressure, retry later |
 | 504 | `RENDER_TIMEOUT` | Render exceeded `RENDER_TIMEOUT_MS` (retried) |
+| 400 | `INVALID_UPLOAD_URL` / `INVALID_UPLOAD_HEADER` | `upload` failed validation |
+| 400 | `UPLOAD_DESTINATION_BLOCKED` | The destination resolves to a blocked address |
+| 501 | `UPLOAD_DISABLED` | `UPLOAD_ENABLED=false` on this instance |
+| 502 | `UPLOAD_REJECTED` | Destination answered 4xx — expired signature, wrong signed headers, no such bucket (not retried) |
+| 502 | `UPLOAD_REDIRECTED` | Destination answered 3xx; redirects are not followed |
+| 502 | `UPLOAD_THROTTLED` | Destination answered 429/408 (retried, honouring `Retry-After`) |
+| 502 | `UPLOAD_CORRUPTED` | The destination's ETag does not match what we sent (retried) |
+| 502 | `UPLOAD_FAILED` | Destination 5xx or a transport failure (retried) |
+| 504 | `UPLOAD_TIMEOUT` | Upload exceeded `UPLOAD_TIMEOUT_MS` (retried) |
 
-Retryable failures (`RENDERER_*`, `RENDER_TIMEOUT`) use up the job's attempts
-with exponential backoff. Non-retryable ones (`RENDER_REJECTED`,
-`PDF_TOO_LARGE`, `INPUT_MISSING`) fail immediately without burning attempts.
+Retryable failures (`RENDERER_*`, `RENDER_TIMEOUT`, `UPLOAD_FAILED`,
+`UPLOAD_TIMEOUT`, `UPLOAD_CORRUPTED`) use up the job's attempts with exponential
+backoff. Non-retryable ones (`RENDER_REJECTED`, `PDF_TOO_LARGE`, `INPUT_MISSING`,
+`UPLOAD_REJECTED`, `UPLOAD_REDIRECTED`) fail immediately without burning
+attempts. `UPLOAD_THROTTLED` is retried inside the same attempt, up to
+`UPLOAD_THROTTLE_RETRIES` times, because the destination told us how long to
+wait.
 
 ## Configuration
 
@@ -244,6 +389,13 @@ values worth knowing:
 | `PDF_TTL_SECONDS` | `3600` | PDFs and job records expire together |
 | `FAILED_JOB_TTL_SECONDS` | `86400` | Failed jobs keep their input HTML |
 | `SYNC_TIMEOUT_MS` | `25000` | When `/v1/pdf/sync` gives up waiting |
+| `UPLOAD_ENABLED` | `true` | Accept `upload` at all |
+| `UPLOAD_TIMEOUT_MS` | `30000` | Per-attempt deadline for the upload |
+| `UPLOAD_ALLOW_HTTP` | `false` | Permit `http://` destinations (development only) |
+| `UPLOAD_ALLOW_PRIVATE_IPS` | `false` | Permit private/loopback destinations (MinIO on the same network) |
+| `UPLOAD_HOST_ALLOWLIST` | *(empty)* | Comma-separated host suffixes; empty means any public host |
+| `UPLOAD_MAX_RESPONSE_BYTES` | `4096` | How much of the destination's error body to echo back; `0` disables |
+| `UPLOAD_THROTTLE_RETRIES` | `2` | Extra in-attempt tries when the destination answers 429/408 |
 | `STORAGE_DRIVER` | `local` | `local` or `r2` |
 | `VITALS_INTERVAL_SECONDS` | `30` | Heartbeat log interval; 10–15 while load testing |
 | `METRICS_ENABLED` | `true` | Prometheus endpoints on private ports 9090/9091 |
@@ -345,6 +497,7 @@ src/
   worker/     BullMQ worker and the retention janitor
   queue/      Redis connections, queue definition, job contracts
   renderer/   Gotenberg client
+  upload/     presigned-URL destination validation and the upload itself
   storage/    local disk and R2/S3 drivers
   config/     environment parsing and boot-time validation
   shared/     ids, errors, logger, PDF option contract
